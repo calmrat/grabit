@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+# coding: utf-8
+
+import os
+import hashlib
+import re
+import shutil
+import subprocess
+import sys
+
+import ipdb  #NOQA
+
+# FIXME: enable 'search' and 'download' find using youtube api
+
+
+def yt(url):
+    # youtube-dl -x --audio-format "mp3" $1
+    base_url = 'https://www.youtube.com/watch?v={}'
+    match = re.search('v=(.+)', url)
+    url = base_url.format(match.groups(0)[0])
+    cmd = 'youtube-dl -x --audio-format "mp3" "{}"'.format(url)
+    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+    stdout = result.stdout.decode()
+    opath = re.search('Destination: (.*\.mp3)\n', stdout).groups()[0]
+    npath = clean_file(opath)
+    shutil.move(opath, npath)
+
+
+def sluggify(string, keep_characters=(' ', '.', '-')):
+    slug = "".join(c for c in string
+                   if c.isalnum() or c in keep_characters)
+    slug = re.sub('\-+', '-', slug)
+    return slug
+
+
+def clean_file(path):
+    path = ''.join(path.split('.')[0:-1]) + '.mp3'
+    path = sluggify(path)
+    path = re.sub(' Official Audio', '', path, flags=re.I)
+    path = re.sub(' Official (Music )?Video', '', path, flags=re.I)
+    path = re.sub('.Mp3', '.mp3', path, flags=re.I)
+
+    _id = re.search('[\- ]([a-zA-Z0-9\- ]{9,12}).mp3$', path)
+    if _id:
+        match = _id.groups()[0]
+        has_digits = re.search('[0-9]', match)
+        has_mix_case = re.search('[a-z]?[A-Z]|[A-Z]?[a-z]', match)
+        if has_digits or has_mix_case:
+            path = re.sub('[\- ][a-zA-Z0-9\- ]{9,12}.mp3$', '.mp3', path)
+    path = re.sub('\s+', ' ', path)
+    return path
+
+
+def clean(odir, commit=False):
+    for ofile in os.listdir(odir):
+        opath = os.path.join(odir, ofile)
+        # skip directories
+        if os.path.isdir(opath):
+            continue
+        elif ofile.split('.')[-1] != 'mp3':
+            continue
+        else:
+            nfile = clean_file(ofile)
+            npath = os.path.join(odir, nfile)
+            if opath != npath:
+                #print('mv "{}" "{}"'.format(opath, npath))
+                if commit:
+                    shutil.move(opath, npath)
+
+
+def chunk_reader(fobj, chunk_size=1024):
+    """Generator that reads a file in chunks of bytes"""
+    while True:
+        chunk = fobj.read(chunk_size)
+        if not chunk:
+            return
+        yield chunk
+
+
+def check_for_duplicates(paths, hash=hashlib.sha1):
+    hashes = {}
+    dup_found = False
+    for path in paths:
+        for dirpath, dirnames, filenames in os.walk(path):
+            for filename in filenames:
+                full_path = os.path.join(dirpath, filename)
+                hashobj = hash()
+                for chunk in chunk_reader(open(full_path, 'rb')):
+                    hashobj.update(chunk)
+                file_id = (hashobj.digest(), os.path.getsize(full_path))
+                duplicate = hashes.get(file_id, None)
+                if duplicate:
+                    dup_found = True
+                    print("Duplicate found: {} and {}".format(full_path,
+                                                              duplicate))
+                else:
+                    hashes[file_id] = full_path
+
+    return dup_found
+
+
+if __name__ == '__main__':
+    path = sys.argv[1]
+
+    if 'http' in path:
+        yt(path)
+    else:
+        commit = True
+        clean(path, commit=commit)
+
+    check_for_duplicates(['./'])

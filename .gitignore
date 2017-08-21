@@ -1,0 +1,11 @@
+__pycache__
+
+*.ropeproject*
+
+*build
+
+*.sw[op]
+
+*.egg-info*
+
+dist/
